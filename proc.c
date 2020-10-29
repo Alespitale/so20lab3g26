@@ -7,6 +7,13 @@
 #include "proc.h"
 #include "spinlock.h"
 
+struct proc *queue0[NPROC];
+struct proc *queue1[NPROC];
+struct proc *queue2[NPROC];
+int cp_q0 = -1;
+int cp_q1 = -1;
+int cp_q2 = -1;
+
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
@@ -88,6 +95,10 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
+  p->priority = 0;
+  p->cticks = 0;
+  cp_q0++;
+  queue0[cp_q0] = p;
 
   release(&ptable.lock);
 
@@ -254,7 +265,7 @@ exit(void)
 
   // Pass abandoned children to init.
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-    if(p->parent == curproc){
+    if(p->parent  == curproc){
       p->parent = initproc;
       if(p->state == ZOMBIE)
         wakeup1(initproc);
@@ -336,6 +347,7 @@ scheduler(void)
       if(p->state != RUNNABLE)
         continue;
 
+    
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
@@ -346,6 +358,17 @@ scheduler(void)
       swtch(&(c->scheduler), p->context);
       switchkvm();
 
+      if(p->cticks != 0){
+        if(p->priority >= 0 && p->priority < (NPRIO - 1)){
+          p->priority = p->priority + 1;
+        }
+        p->cticks = 0;
+      }else{
+        if(p->priority > 0 && p->priority <= (NPRIO - 1)){
+          p->priority = p->priority - 1;
+        }
+      }
+
       // Process is done running for now.
       // It should have changed its p->state before coming back.
       c->proc = 0;
@@ -354,6 +377,58 @@ scheduler(void)
 
   }
 }
+
+
+void
+scheduler(void)
+{
+  struct proc *p;
+  struct cpu *c = mycpu();
+  c->proc = 0;
+  
+  for(;;){
+    // Enable interrupts on this processor.
+    sti();
+
+    acquire(&ptable.lock);
+
+    if(cp_q0 != -1){
+      for(uint i = 0; i <= cp_q0 ; i++){
+        if(queue0[i]->state != RUNNABLE){
+          continue;
+        }
+        p = queue0[i];
+        c->proc = queue0[i];
+        p->state = RUNNING;
+        swtch(&(c->scheduler), p->context);
+        switchkvm();
+
+        if(p->cticks != 0){
+          if(p->priority >= 0 && p->priority < (NPRIO - 1)){
+            p->priority = p->priority + 1;
+            cp_q1++;
+            queue1[cp_q1] = p;
+            for (uint j = i; i < cp_q0-1; j++){
+              queue0[j] = queue0[j+1];
+            }
+            
+          }
+          p->cticks = 0;
+        }else{
+          if(p->priority > 0 && p->priority <= (NPRIO - 1)){
+            p->priority = p->priority - 1;
+          }
+        }
+
+        
+      }
+      
+    }
+
+  }
+}
+
+
 
 // Enter scheduler.  Must hold only ptable.lock
 // and have changed proc->state. Saves and restores
@@ -387,6 +462,7 @@ yield(void)
 {
   acquire(&ptable.lock);  //DOC: yieldlock
   myproc()->state = RUNNABLE;
+  myproc()->cticks++;
   sched();
   release(&ptable.lock);
 }
@@ -523,7 +599,7 @@ procdump(void)
       state = states[p->state];
     else
       state = "???";
-    cprintf("%d %s %s", p->pid, state, p->name);
+    cprintf("%d %s %s Priority: [ %d ]", p->pid, state, p->name, p->priority);
     if(p->state == SLEEPING){
       getcallerpcs((uint*)p->context->ebp+2, pc);
       for(i=0; i<10 && pc[i] != 0; i++)

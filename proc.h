@@ -49,6 +49,8 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  int priority;                // Prioridad de un proceso
+  int cticks;                  // Cuenta la cantidad de veces que un procesos es bloqueado por una interrumpcion de quantum             
 };
 
 // Process memory is laid out contiguously, low addresses first:
