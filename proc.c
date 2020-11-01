@@ -345,7 +345,7 @@ scheduler(void)
         int i;
         int priority;
         int aux;
-        for(priority = 0; priority < (NPRIO - 1); priority++){
+        for(priority = 0; priority <= (NPRIO - 1); priority++){
           while(ptable.cp[priority] > -1){
             p = ptable.q[priority][0];
             for(i = 0; i < ptable.cp[priority] ; i++){
@@ -353,16 +353,18 @@ scheduler(void)
             }
             ptable.cp[priority]--;
             aux = p->priority;
-            switchuvm(p);
-            p->state = RUNNING;
-            swtch(&c->scheduler, p->context);
-            switchkvm();
-            if ( p->priority == aux && p->priority > 0){
-              p->priority--;
-              ptable.cp[p->priority]++;
-              ptable.q[p->priority][ptable.cp[p->priority]] = p;
+            if(p->state == RUNNABLE){
+              switchuvm(p);
+              p->state = RUNNING;
+              swtch(&c->scheduler, p->context);
+              switchkvm();
+              if ( p->priority == aux && p->priority > 0){
+                p->priority--;
+                ptable.cp[p->priority]++;
+                ptable.q[p->priority][ptable.cp[p->priority]] = p;
+              }
+              p = 0;
             }
-            p = 0;
           }
         }
         release(&ptable.lock);
