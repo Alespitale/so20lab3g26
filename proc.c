@@ -27,7 +27,7 @@ static void rm_proc(struct proc *p);
 
 
 static void 
-rm_proc(struct proc *p){
+rm_proc(struct proc *p){      //elimina proceso de una cola.
   int i,j,k;
   for(k = 0 ; k < NPRIO ; k++){
     for(i = 0 ; i <= ptable.cp[k] ; i++){
@@ -114,8 +114,8 @@ found:
   p->state = EMBRYO;
   p->pid = nextpid++;
   p->priority = 0;
-  ptable.cp[0]++;
-  ptable.q[0][ptable.cp[0]] = p;
+  ptable.cp[0]++;                 // contador de procesos +1
+  ptable.q[0][ptable.cp[0]] = p;  // ingreso proceso nuevo en cola 0
 
   release(&ptable.lock);
 
@@ -378,37 +378,44 @@ scheduler(void)
           swtch(&(c->scheduler), p->context);
           switchkvm();
           c->proc = 0;
-          if(i == 0){
-            r0=1;
-            if(aux_p != p->priority){
+          if(i == 0){                             // Si estamos en la cola 0
+            r0=1;                                 // r0 permite saber si se ejecuto algun proceso en la cola 0
+            if(aux_p != p->priority){             // Si consume un quantum lo baja de prioridad
               rm_proc(p);
               ptable.cp[i+1]++;
               ptable.q[i+1][ptable.cp[i+1]] = p;
             }
           }
-          if(i==1){
-            if(aux_p != p->priority){
+          if(i==1){                               // Si estamos en la cola 1
+            if(aux_p != p->priority){             //Si consume todo el quantum , baja de prioridad
               rm_proc(p);
               ptable.cp[i+1]++;
               ptable.q[i+1][ptable.cp[i+1]] = p;
+            }else{                                //Si termina antes de consumir todo el quantum,sube prioridad
+              rm_proc(p); 
+              ptable.cp[i-1]++;
+              ptable.q[i-1][ptable.cp[i-1]] = p;
+              p->priority--;
+            }
+            i=3;
+            break;
+          }
+          if(i==2){                               //Si estamos en la cola 2
+            if(p->x == 0){                        // Si no sonsume un quantum lo premiamos subiendolo de prioridad
+              rm_proc(p);
+              ptable.cp[i-1]++;
+              ptable.q[i-1][ptable.cp[i-1]] = p;
+              p->priority--;
             }else{
               rm_proc(p);
-              ptable.cp[i-1]++;
-              ptable.q[i-1][ptable.cp[i-1]] = p;
-              p->priority--;
+              ptable.cp[i]++;
+              ptable.q[i][ptable.cp[i]] = p;
             }
-          }
-          if(i==2){
-            if(p->x == 0){
-              rm_proc(p);
-              ptable.cp[i-1]++;
-              ptable.q[i-1][ptable.cp[i-1]] = p;
-              p->priority--;
-            }
+            break;
           }
         }
       }//B
-      if(r0 == 1 && i == 0){
+      if(r0 == 1 && i == 0){                       //Si en la cola 0 se ejecuto algun proceso , que vuelva a ejecutar la cola 0
         break;
       }
     }//A
