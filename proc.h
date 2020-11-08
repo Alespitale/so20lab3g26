@@ -50,7 +50,7 @@ struct proc {
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
   int priority;                // Prioridad de un proceso
-  int x;
+  int quanto;                  // Si consume un quantum vale 1, si no 0
 };
 
 // Process memory is laid out contiguously, low addresses first:

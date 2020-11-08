@@ -6,12 +6,13 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#include <stdbool.h>
 
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
-  struct proc *q[NPRIO][NPROC];
-  int cp[NPRIO];
+  struct proc *queue[NPRIO][NPROC];
+  int count_proc[NPRIO];
 } ptable;
 
 static struct proc *initproc;
@@ -23,19 +24,17 @@ extern void trapret(void);
 static void wakeup1(void *chan);
 static void rm_proc(struct proc *p);
 
-
-
-
 static void 
-rm_proc(struct proc *p){      //elimina proceso de una cola.
+rm_proc(struct proc *p)
+{      //elimina proceso de una cola.
   int i,j,k;
   for(k = 0 ; k < NPRIO ; k++){
-    for(i = 0 ; i <= ptable.cp[k] ; i++){
-      if(p->pid == ptable.q[k][i]->pid){
-        for(j = i ; j <= ptable.cp[k] ; j++){
-          ptable.q[k][j] = ptable.q[k][j+1];
+    for(i = 0 ; i <= ptable.count_proc[k] ; i++){
+      if(p->pid == ptable.queue[k][i]->pid){
+        for(j = i ; j <= ptable.count_proc[k] ; j++){
+          ptable.queue[k][j] = ptable.queue[k][j+1];
         }
-        ptable.cp[k]--;
+        ptable.count_proc[k]--;
         break;
       }
     }
@@ -46,9 +45,9 @@ void
 pinit(void)
 {
   initlock(&ptable.lock, "ptable");
-  ptable.cp[0]= -1;
-  ptable.cp[1]= -1;
-  ptable.cp[2]= -1;
+  ptable.count_proc[0]= -1;
+  ptable.count_proc[1]= -1;
+  ptable.count_proc[2]= -1;
 }
 
 // Must be called with interrupts disabled
@@ -114,8 +113,8 @@ found:
   p->state = EMBRYO;
   p->pid = nextpid++;
   p->priority = 0;
-  ptable.cp[0]++;                 // contador de procesos +1
-  ptable.q[0][ptable.cp[0]] = p;  // ingreso proceso nuevo en cola 0
+  ptable.count_proc[0]++;                 // contador de procesos +1
+  ptable.queue[0][ptable.count_proc[0]] = p;  // ingreso proceso nuevo en cola 0
 
   release(&ptable.lock);
 
@@ -363,65 +362,65 @@ scheduler(void)
   for(;;){
     // Enable interrupts on this processor.
     sti();
-    int i,j,aux_p,r0;
+    int i,j,aux_prio;
+    bool exec_q0;
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
-    for( i = 0 ; i < NPRIO ; i++){//A
-      r0 = 0;
-      for(j = 0 ; j <= ptable.cp[i] ; j++){//B
-        p = ptable.q[i][j];
+    for( i = 0 ; i < NPRIO ; i++){
+      exec_q0 = false;
+      for(j = 0 ; j <= ptable.count_proc[i] ; j++){
+        p = ptable.queue[i][j];
         if(p->state == RUNNABLE){
-          aux_p = p->priority;
+          p->quanto = 0;
+          aux_prio = p->priority;
           c->proc = p;
           switchuvm(p);
           p->state = RUNNING;
           swtch(&(c->scheduler), p->context);
           switchkvm();
           c->proc = 0;
-          if(i == 0){                             // Si estamos en la cola 0
-            r0=1;                                 // r0 permite saber si se ejecuto algun proceso en la cola 0
-            if(aux_p != p->priority){             // Si consume un quantum lo baja de prioridad
+          if(i == NPRIO-3){                             // Si estamos en la cola 0
+            exec_q0 = true;                             // exec_q0 permite saber si se ejecuto algun proceso en la cola 0
+            if(aux_prio != p->priority){                // Si consume un quantum lo baja de prioridad
               rm_proc(p);
-              ptable.cp[i+1]++;
-              ptable.q[i+1][ptable.cp[i+1]] = p;
+              ptable.count_proc[i+1]++;
+              ptable.queue[i+1][ptable.count_proc[i+1]] = p;
             }
           }
-          if(i==1){                               // Si estamos en la cola 1
-            if(aux_p != p->priority){             //Si consume todo el quantum , baja de prioridad
+          if(i == NPRIO-2){                             // Si estamos en la cola 1
+            if(aux_prio != p->priority){                // Si consume todo el quantum , baja de prioridad
               rm_proc(p);
-              ptable.cp[i+1]++;
-              ptable.q[i+1][ptable.cp[i+1]] = p;
-            }else{                                //Si termina antes de consumir todo el quantum,sube prioridad
+              ptable.count_proc[i+1]++;
+              ptable.queue[i+1][ptable.count_proc[i+1]] = p;
+            }else{                                      // Si termina antes de consumir todo el quantum,sube prioridad
               rm_proc(p); 
-              ptable.cp[i-1]++;
-              ptable.q[i-1][ptable.cp[i-1]] = p;
+              ptable.count_proc[i-1]++;
+              ptable.queue[i-1][ptable.count_proc[i-1]] = p;
               p->priority--;
             }
-            i=3;
+            i=NPRIO;
             break;
           }
-          if(i==2){                               //Si estamos en la cola 2
-            if(p->x == 0){                        // Si no sonsume un quantum lo premiamos subiendolo de prioridad
+          if(i == NPRIO-1){                              // Si estamos en la cola 2
+            if(p->quanto == 0){                          // Si no sonsume un quantum aumentamos su prioridad
               rm_proc(p);
-              ptable.cp[i-1]++;
-              ptable.q[i-1][ptable.cp[i-1]] = p;
+              ptable.count_proc[i-1]++;
+              ptable.queue[i-1][ptable.count_proc[i-1]] = p;
               p->priority--;
-            }else{
+            }else{                                       // Consumió todo el quantum, mantiene su prioridad por tener la menor
               rm_proc(p);
-              ptable.cp[i]++;
-              ptable.q[i][ptable.cp[i]] = p;
+              ptable.count_proc[i]++;
+              ptable.queue[i][ptable.count_proc[i]] = p;
             }
             break;
           }
         }
-      }//B
-      if(r0 == 1 && i == 0){                       //Si en la cola 0 se ejecuto algun proceso , que vuelva a ejecutar la cola 0
+      }
+      if((exec_q0 == true) && i == (NPRIO-3)){           // Si en la cola 0 se ejecuto algun proceso, que vuelva a ejecutar la cola 0
         break;
       }
-    }//A
+    }
     release(&ptable.lock);
-
-
   }
 }
 
@@ -457,7 +456,7 @@ yield(void)
 {
   acquire(&ptable.lock);  //DOC: yieldlock
   if(myproc()->priority == 2){
-    myproc()->x = 1;
+    myproc()->quanto = 1;
   }
   if(myproc()->priority < 2){
     myproc()->priority++;
@@ -613,8 +612,8 @@ procdump(void)
   cprintf("--------------Print queues-------------\n");
   for(int r = 0; r<NPRIO ; r++){
     cprintf("Cola %d : \n",r);
-    for(int k = 0; k <= ptable.cp[r]; k++){
-      p = ptable.q[r][k];
+    for(int k = 0; k <= ptable.count_proc[r]; k++){
+      p = ptable.queue[r][k];
       if(p->state == UNUSED)
         continue;
       if(p->state >= 0 && p->state < NELEM(states) && states[p->state])
